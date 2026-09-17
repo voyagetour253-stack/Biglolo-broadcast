@@ -1,51 +1,71 @@
 import os
 import asyncio
+import logging
+from threading import Thread
+from flask import Flask
 from telegram import Bot
 
-# Récupération sécurisée du Token du bot depuis les variables d'environnement de Render
+# Configuration des logs
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+
+# Récupération sécurisée du Token
 TOKEN = os.environ.get("TOKEN")
 
+# 1. Mini-serveur web Flask obligatoire pour que Render valide l'offre gratuite (Web Service)
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Le service de broadcast Biglolo est en ligne !"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
+
+# 2. Le script de diffusion asynchrone
 async def run_broadcast():
     if not TOKEN:
-        print("Erreur : Aucun TOKEN trouvé dans les variables d'environnement.")
+        logging.error("Aucun TOKEN trouvé dans les variables d'environnement.")
         return
 
     bot = Bot(token=TOKEN)
 
-    # 1. Lecture de la liste des abonnés
+    # Lecture de la liste des abonnés
     subscribers_file = "liste_abonnes.txt"
     if not os.path.exists(subscribers_file):
-        print(f"Erreur : Le fichier {subscribers_file} est introuvable.")
+        logging.error(f"Le fichier {subscribers_file} est introuvable.")
         return
 
     with open(subscribers_file, "r", encoding="utf-8") as f:
-        # Nettoie les espaces et ignore les lignes vides
         user_ids = [line.strip() for line in f if line.strip()]
 
     total = len(user_ids)
     if total == 0:
-        print("Aucun abonné trouvé dans la liste.")
+        logging.info("Aucun abonné trouvé dans la liste.")
         return
 
-    # 2. Lecture du message à diffuser
+    # Lecture du message
     message_file = "message.txt"
     if not os.path.exists(message_file):
-        print(f"Erreur : Le fichier {message_file} est introuvable.")
+        logging.error(f"Le fichier {message_file} est introuvable.")
         return
 
     with open(message_file, "r", encoding="utf-8") as f:
         message_text = f.read().strip()
 
     if not message_text:
-        print("Erreur : Le message de diffusion est vide.")
+        logging.error("Le message de diffusion est vide.")
         return
 
-    print(f"--- DÉBUT DU BROADCAST VERS {total} UTILISATEURS ---")
+    logging.info(f"--- DÉBUT DU BROADCAST VERS {total} UTILISATEURS ---")
 
     success = 0
     blocked = 0
 
-    # 3. Boucle d'envoi avec protection anti-blocage
     for uid in user_ids:
         try:
             await bot.send_message(
@@ -54,16 +74,20 @@ async def run_broadcast():
                 parse_mode="Markdown"
             )
             success += 1
-            # Pause de sécurité pour respecter les limites de Telegram
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.05) # Pause anti-spam
         except Exception as e:
-            # Si le compte a bloqué le bot ou n'existe pas
             blocked += 1
-            print(f"Échec pour {uid}: {e}")
+            logging.warning(f"Échec pour {uid}: {e}")
 
-    print("--- FIN DU BROADCAST ---")
-    print(f"Succès : {success}")
-    print(f"Échecs (comptes bloqués / introuvables) : {blocked}")
+    logging.info("--- FIN DU BROADCAST ---")
+    logging.info(f"Succès : {success} | Échecs : {blocked}")
+
+def main():
+    # Lance le mini-serveur web en arrière-plan pour satisfaire Render
+    keep_alive()
+    
+    # Lance automatiquement le broadcast au démarrage du déploiement
+    asyncio.run(run_broadcast())
 
 if __name__ == "__main__":
-    asyncio.run(run_broadcast())
+    main()
